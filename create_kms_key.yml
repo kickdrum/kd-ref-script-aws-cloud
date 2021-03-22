@@ -1,0 +1,65 @@
+Description: Creates a KMS key with IAM User permissions
+
+Parameters:
+    keyAliasName:
+        Description: 'Alias name for the KMS key'
+        Type: String
+    keyDescription:
+        Description: 'Description about this KMS Key'
+        Type: String
+    creator:
+        Description: 'Owner tag to be used in resources'
+        Type: String
+    projectName:
+        Description: 'Project tag to be used in resources'
+        Type: String
+    isEnabled:
+        Description: 'Boolean to indicate if the KMS key should be enabled after creation'
+        Type: String
+        AllowedValues:
+            - true
+            - false
+    isKeyRotationEnable:
+        Description: 'Boolean to indicate if the KMS Key should be enable for rotation'
+        Type: String
+        AllowedValues:
+            - true
+            - false
+  
+Resources:
+    myKMSKey:
+        Type: AWS::KMS::Key
+        DeletionPolicy: Delete
+        Properties: 
+            Description: !Ref keyDescription
+            Enabled: !Ref isEnabled
+            EnableKeyRotation: !Ref isKeyRotationEnable
+            KeyPolicy: !Sub '{
+                "Version": "2012-10-17",
+                "Id": "key-administrator-policy",
+                "Statement": [
+                    {
+                        "Sid": "Enable IAM User Permissions",
+                        "Effect": "Allow",
+                        "Principal": {
+                            "AWS": "arn:aws:iam::${AWS::AccountId}:root"
+                        },
+                        "Action": "kms:*",
+                        "Resource": "*"
+                    }
+                ]
+                }'
+            KeyUsage: ENCRYPT_DECRYPT
+            PendingWindowInDays: 30
+            Tags: 
+                -
+                    Key: creator
+                    Value: !Ref creator
+                -
+                    Key: project
+                    Value: !Ref projectName
+    myKMSKeyAliasName:
+        Type: AWS::KMS::Alias
+        Properties: 
+            AliasName: !Sub alias/${keyAliasName}
+            TargetKeyId: !Ref myKMSKey
