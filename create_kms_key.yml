@@ -16,12 +16,14 @@ Parameters:
     isEnabled:
         Description: 'Boolean to indicate if the KMS key should be enabled after creation'
         Type: String
+        Default: true
         AllowedValues:
             - true
             - false
     isKeyRotationEnable:
         Description: 'Boolean to indicate if the KMS Key should be enable for rotation'
         Type: String
+        Default: true
         AllowedValues:
             - true
             - false
@@ -49,7 +51,9 @@ Resources:
                     }
                 ]
                 }'
+            # Symmetric/Asymmetric key can be created using this KeyUsage field
             KeyUsage: ENCRYPT_DECRYPT
+            # Number of days to keep the KMS key when marked for deletion
             PendingWindowInDays: 30
             Tags: 
                 -
@@ -58,6 +62,7 @@ Resources:
                 -
                     Key: project
                     Value: !Ref projectName
+    # Custom alias name to the KMS key can be configured here
     myKMSKeyAliasName:
         Type: AWS::KMS::Alias
         Properties: 
