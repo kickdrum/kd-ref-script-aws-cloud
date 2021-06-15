@@ -16,4 +16,4 @@ Secret for holding DB Credentials - Rotation lambda for the same
 Encryption (if required) - this requires a t3.medium or higher instance
 
 ## Execution video
-Refer: https://drive.google.com/file/d/1qZo5YRVPGLOHiP1F69ettiaCvsUK3dnD/view?usp=sharing
+Refer: https://drive.google.com/file/d/1k4VsRz9C_FoIjyP95Cqk2atN4KsziZcx/view?usp=sharing
