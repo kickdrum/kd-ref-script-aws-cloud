@@ -1,0 +1,378 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::SecretsManager-2020-07-23
+
+Description: >
+  This is the Cloud formation template to configure RDS Database with MultiAZ enabled/disabled based on input parameters
+  This sets up credentials in AWS Secret Manager, which rotate every 30 days by default
+  Contains logging for slow query, error queries, general logs
+# Metadata:
+Parameters:
+  environment:
+    Description: "Environment Stage"
+    Type: String
+    AllowedValues:
+      - prod
+      - staging
+      - integration
+      - qa
+      - dev
+      - demo
+  creator:
+    Description: "Creator tag to be used in resources"
+    Type: String
+  projectName:
+    Description: "Project tag to be used in resources"
+    Type: String
+  SubnetList:
+    Description: "Select at least TWO Subnet Ids from the same VPC/CIDR Range, but different AZs"
+    Type: List<AWS::EC2::Subnet::Id>
+  AccessIPRange:
+    Description: The ingress CIDR IP range for accessing the DB. For access to DB in private subnet, enter the bastion IP address
+    Type: String
+    Default: "1.2.3.4/32"
+  DBName:
+    Description: Database Name
+    Type: String
+    MinLength: "1"
+    MaxLength: "64"
+    AllowedPattern: "^[a-zA-Z]+[0-9a-zA-Z]*$"
+    ConstraintDescription: Identifiers must begin with a letter; must contain only ASCII letters, digits, and hyphens; and must not end with a hyphen or contain two consecutive hyphens
+  DBPort:
+    Description: TCP/IP Port for the Database Instance
+    Type: Number
+    Default: 3306
+    ConstraintDescription: "Must be in the range [1115-65535]"
+    MinValue: 1115
+    MaxValue: 65535
+  DBUsername:
+    Description: Database master username
+    Type: String
+    MinLength: "1"
+    MaxLength: "16"
+    AllowedPattern: "^[a-zA-Z]+[0-9a-zA-Z_]*$"
+    ConstraintDescription: Must start with a letter. Only numbers, letters, and _ accepted. max length 16 characters
+  DBEngineAndVersion:
+    Description: Select DBEngine with associated version
+    Type: String
+    Default: mysql-8.0.23
+    AllowedValues: 
+      - mysql-8.0.23
+      # - postgres-12.5
+  DBInstanceClass:
+    Default: db.t2.micro
+    Description: "Database Instance Class, upgrade to t3.medium if encryption required"
+    Type: String
+    AllowedValues:
+      - db.t2.micro
+      - db.t3.medium
+      - db.r4.large
+      - db.r4.xlarge
+      - db.r4.2xlarge
+      - db.r4.4xlarge
+      - db.r4.8xlarge
+      - db.r4.16xlarge
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
+      - db.r5.4xlarge
+      - db.r5.12xlarge
+  EnableEncryption:
+    Default: false
+    Description: Enable DB Encryption - Requires minimum of t3.medium DB instance
+    Type: String
+    AllowedValues:
+      - true
+      - false
+  EnablePerformanceInsights:
+    Default: false
+    Description: "Enable Performance Insights ( https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_PerfInsights.html )"
+    Type: String
+    AllowedValues:
+      - true
+      - false
+  EnableReplica:
+    Default: false
+    Description: "Enabled Read Replica"
+    Type: String
+    AllowedValues:
+      - true
+      - false
+  EnableDeletionProtection:
+    Default: true
+    Description: "Enable Deletion Protection for the RDS Instance"
+    Type: String
+    AllowedValues:
+      - true
+      - false
+Mappings:
+  DBEngineMap:
+    # Add mappings as required for DBEngineAndVersion field
+    mysql-8.0.23:
+      engine: mysql
+      family: mysql8.0
+      version: "8.0.23"
+      logExports: 
+        - error
+        - slowquery
+        - general
+    # postgres-12.5:
+    #   engine: postgres
+    #   family: postgres12
+    #   version: "12.5"
+    #   logExports: 
+    #     - postgresql
+    #     - upgrade
+Conditions:
+  IsProd: !Equals [!Ref environment, "prod"]
+  # IsDev: !Equals [!Ref environment, 'dev']
+  IsReplica: !Equals [!Ref EnableReplica, "true"]
+  IsEncrypted: !Equals [!Ref EnableEncryption, "true"]
+  IsPerformanceInsights: !Equals [!Ref EnablePerformanceInsights, "true"]
+Resources:
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable access to the RDS DB
+      SecurityGroupIngress:
+        - CidrIp: !Ref AccessIPRange
+          IpProtocol: tcp
+          ToPort: !Ref DBPort
+          FromPort: !Ref DBPort
+          Description: "Allow specified IP to access DB"
+      Tags:
+      -
+        Key: Name
+        Value: !Sub "${projectName}-DbSecurityGroup-${environment}"
+      -
+        Key: creator
+        Value: !Sub ${creator}
+      -
+        Key: project
+        Value: !Sub ${projectName}
+  rdsMonitoringIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "monitoring.rds.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+  # KMS Key to be used for Encrypting the RDS
+  rdsKmsKey:
+    Condition: IsEncrypted
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS Key used to Encrypt the data at Rest in RDS
+      Enabled: true
+      EnableKeyRotation: true
+      KeyPolicy: !Sub '{
+      "Version": "2012-10-17",
+      "Id": "key-administrator-policy",
+      "Statement": [
+        {
+          "Sid": "Enable IAM User Permissions",
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": "arn:aws:iam::${AWS::AccountId}:root"
+          },
+          "Action": "kms:*",
+          "Resource": "*"
+        }
+      ]
+    }'
+      # KeyUsage: String (Default: ENCRYPT_DECRYPT)
+      # PendingWindowInDays: Integer (Default: 30)
+      Tags:
+        -
+          Key: creator
+          Value: !Ref creator
+        -
+          Key: project
+          Value: !Ref projectName
+  # Alias for the KMS Key to be used for Encrypting the data in RDS
+  RDSKmsKeyAlias:
+    Condition: IsEncrypted
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/${projectName}/${environment}/rds
+      TargetKeyId: !Ref rdsKmsKey
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: DB Subnet Groups
+      SubnetIds: !Ref SubnetList
+      Tags:
+        -
+          Key: creator
+          Value: !Sub ${creator}
+        -
+          Key: project
+          Value: !Sub ${projectName}
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: DB Parameter Group
+      Family: !FindInMap [DBEngineMap, !Ref DBEngineAndVersion, family]
+      # Parameters:
+      #   slow_query_log: "1"
+      #   general_log: "1"
+      #   log_queries_not_using_indexes: "0"
+      #   log_output: FILE
+      #   long_query_time: "0.1" #100 millisecond
+      Tags:
+        -
+          Key: creator
+          Value: !Sub ${creator}
+        -
+          Key: project
+          Value: !Sub ${projectName}
+  RDSSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: This is my rds instance secret
+      GenerateSecretString:
+        SecretStringTemplate:
+          !Join ["", ['{"username": "', !Ref DBUsername, '"}']]
+        GenerateStringKey: "password"
+        IncludeSpace: false
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+      #KmsKeyId: String
+      Name: !Sub "/${projectName}/${environment}/database"
+      # SecretString:
+      #   String
+      Tags:
+        - Key: creator
+          Value: !Sub ${creator}
+        - Key: project
+          Value: !Sub ${projectName}
+        - Key: Name
+          Value: !Sub ${projectName}-rds-credentials
+  rdsSecretAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref RDSSecret
+      TargetId: !Ref DBMaster
+      TargetType: AWS::RDS::DBInstance
+  rdsSecretRotation:
+    Type: AWS::SecretsManager::RotationSchedule
+    DependsOn: rdsSecretAttachment
+    Properties:
+      SecretId: !Ref RDSSecret
+      HostedRotationLambda:
+        RotationType: MySQLSingleUser
+        RotationLambdaName: !Sub ${projectName}-secret-rotation-${environment}
+        VpcSubnetIds: !Join
+          - ','
+          - !Ref SubnetList
+      RotationRules:
+        AutomaticallyAfterDays: 30
+  DBMaster:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: !Ref DBName
+      AllocatedStorage: "20"
+      StorageType: gp2
+      EnableCloudwatchLogsExports:
+        !FindInMap [DBEngineMap, !Ref DBEngineAndVersion, logExports]
+      KmsKeyId: !If [IsEncrypted, !GetAtt rdsKmsKey.Arn, !Ref "AWS::NoValue"]
+      StorageEncrypted: !If [IsEncrypted, true, false]
+      MasterUserPassword:
+        !Join [
+          "",
+          [
+            "{{resolve:secretsmanager:",
+            !Ref RDSSecret,
+            ":SecretString:password}}",
+          ],
+        ]
+      MasterUsername:
+        !Join [
+          "",
+          [
+            "{{resolve:secretsmanager:",
+            !Ref RDSSecret,
+            ":SecretString:username}}",
+          ],
+        ]
+      CopyTagsToSnapshot: true
+      BackupRetentionPeriod: !If [IsProd, 35, 7]
+      DeletionProtection: !Ref EnableDeletionProtection
+      DBInstanceClass: !Ref DBInstanceClass
+      DBInstanceIdentifier: !Sub "${DBName}-${environment}-master"
+      Engine: !FindInMap [DBEngineMap, !Ref DBEngineAndVersion, engine]
+      EngineVersion: !FindInMap [DBEngineMap, !Ref DBEngineAndVersion, version]
+      EnableIAMDatabaseAuthentication: true
+      DBParameterGroupName: !Ref DBParameterGroup
+      MonitoringInterval: 1 #!If [IsProd, 1, 0]
+      MonitoringRoleArn: !GetAtt rdsMonitoringIamRole.Arn
+      AutoMinorVersionUpgrade: false
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      PubliclyAccessible: true
+      EnablePerformanceInsights: !Ref EnablePerformanceInsights
+      PerformanceInsightsRetentionPeriod:
+        !If [IsProd, 731, !If [IsPerformanceInsights, 7, !Ref "AWS::NoValue"]]
+      MultiAZ: !Ref EnableReplica
+      VPCSecurityGroups:
+        - !GetAtt DbSecurityGroup.GroupId
+      Port: !Ref DBPort
+      Tags:
+        - Key: creator
+          Value: !Sub ${creator}
+        - Key: project
+          Value: !Sub ${projectName}
+        - Key: Name
+          Value: !Sub ${projectName}-rds-primary
+  DBReplica:
+    Condition: IsReplica
+    Type: AWS::RDS::DBInstance
+    Properties:
+      SourceDBInstanceIdentifier: !Ref DBMaster
+      DBInstanceIdentifier: !Sub "${DBName}-${environment}-replica"
+      DBInstanceClass: !Ref DBInstanceClass
+      VPCSecurityGroups:
+        - !GetAtt DbSecurityGroup.GroupId
+      Tags:
+        - Key: creator
+          Value: !Sub ${creator}
+        - Key: project
+          Value: !Sub ${projectName}
+        - Key: Name
+          Value: !Sub ${projectName}-rds-replica
+Outputs:
+  rdsMonitoringRole:
+    Description: IAM role required to monitor RDS
+    Value:
+      Fn::GetAtt: [ rdsMonitoringIamRole, Arn ]
+    Export:
+      Name: !Sub "${projectName}-${environment}-rdsMonitoringRole"
+  DBSubnetGroup:
+    Description: DB  Subnet Group
+    Value: !Ref DBSubnetGroup
+    Export:
+      Name: !Sub "${projectName}-${environment}-DBSubnetGroup"
+  rdsKMSKey:
+    Condition: IsEncrypted
+    Description: KMS Key used to encrypt the data in RDS at Rest
+    Value: !GetAtt rdsKmsKey.Arn
+    Export:
+      Name: !Sub ${projectName}-${environment}-rds-kms-key
+  secret:
+    Description: Secret containing DB Credentials
+    Value: !Ref RDSSecret
+    Export:
+      Name: !Sub "${projectName}-${environment}-dbCredentials"
+  SecretName:
+    Description: DB connection details and credentials are found in secret
+    Value: !Sub "/${projectName}/${environment}/database"
+    Export: 
+      Name: !Sub "${projectName}-${environment}-secretName"
+  
