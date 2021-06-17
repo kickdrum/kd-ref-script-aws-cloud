@@ -1,0 +1,59 @@
+Parameters:
+  ExistingVPCId:
+    Description: 'Enter the VPC Id of an existing VPC'
+    Type: String
+    Default: 'vpc-0b371e9290c7b964b' # A dummy VPC Id as the default value
+Resources:
+  # This is another Security Group which gets referred by the main SecurityGroupMain
+  SecurityGroupOther:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Other Secutity Group
+      VpcId: !Sub '${ExistingVPCId}'
+  SecurityGroupMain:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow ssh and http
+      VpcId: !Sub '${ExistingVPCId}'
+      # Inbound Rule is configured in SecurityGroupIngress section. Sample port numbers are mentioned.
+      SecurityGroupIngress:
+      -
+        CidrIp: 0.0.0.0/0
+        FromPort: 22
+        IpProtocol: 'tcp'
+        ToPort: 22
+      -
+        CidrIp: 0.0.0.0/0
+        FromPort: 80
+        IpProtocol: 'tcp'
+        ToPort: 80
+      # Inbound Rule is configured in SecurityGroupIngress section. Sample port numbers are mentioned.
+      SecurityGroupEgress:
+      -
+        CidrIp: 0.0.0.0/0
+        FromPort: 888
+        IpProtocol: 'tcp'
+        ToPort: 888
+      -
+        CidrIp: 0.0.0.0/0
+        FromPort: 999
+        IpProtocol: 'tcp'
+        ToPort: 999
+  # This is the Incoming Rule reference to another security group
+  ReferOtherSecurityGroupIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      SourceSecurityGroupId: !GetAtt SecurityGroupMain.GroupId
+      GroupId: !GetAtt SecurityGroupOther.GroupId
+      FromPort: 77
+      IpProtocol: 'tcp'
+      ToPort: 77
+  # This is the Outgoing Rule reference to another security group
+  ReferOtherSecurityGroupEgressRule:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      SourceSecurityGroupId: !GetAtt SecurityGroupMain.GroupId
+      GroupId: !GetAtt SecurityGroupOther.GroupId
+      FromPort: 88
+      IpProtocol: 'tcp'
+      ToPort: 88   

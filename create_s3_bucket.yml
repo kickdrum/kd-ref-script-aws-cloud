@@ -1,0 +1,103 @@
+Description: Creates a new S3 bucket with encryption enabled
+
+Parameters:
+    bucketName:
+        Description: 'Name of the bucket. Use proper S3 bucket naming convention'
+        Type: String
+    creator:
+        Description: 'Owner tag to be used in resources'
+        Type: String
+    projectName:
+        Description: 'Project tag to be used in resources'
+        Type: String
+    expirationInDays:
+        Description: 'Expiration of S3 objects in Days'
+        Type: Number
+        Default: 365
+    restrictPublicAccess:
+        Description: 'Boolean flag to restrict public access'
+        Type: String
+        Default: false
+        AllowedValues:
+            - true
+            - false     
+    versionEnabled:
+        Description: 'Enable/Suspend flag for handling the Versioning of the bucket'
+        Type: String
+        Default: Suspended
+        AllowedValues:
+            - Enabled
+            - Suspended
+    # Remove this parameter if the encryption is not needed for the bucket
+    kmsKeyARN:
+        Description: 'Mandatory - KMS Key ARN value to use for encryption of the bucket'
+        Type: String
+        Default: ''
+        
+Resources:
+    # Remove this bucket resource when loggin is not needed for the main bucket
+    logsBucket:
+        Type: AWS::S3::Bucket
+        # When the Cloud Formation stack is deleted, should this bucket be deleted with the stack, or should it be retained.
+        DeletionPolicy: Retain
+        Properties:
+            AccessControl: LogDeliveryWrite
+            BucketName: !Sub ${bucketName}-logs
+            LifecycleConfiguration:
+                Rules:
+                -
+                    ExpirationInDays: !Ref expirationInDays
+                    Status: Enabled
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: !Ref restrictPublicAccess
+                BlockPublicPolicy: !Ref restrictPublicAccess
+                IgnorePublicAcls: !Ref restrictPublicAccess
+                RestrictPublicBuckets: !Ref restrictPublicAccess
+            Tags:
+                -
+                  Key: creator
+                  Value: !Ref creator
+                -
+                  Key: project
+                  Value: !Ref projectName
+
+
+    myS3Bucket:
+        Type: AWS::S3::Bucket
+        # When the Cloud Formation stack is deleted, should this bucket be deleted with the stack, or should it be retained
+        DeletionPolicy: Delete
+        Properties: 
+            BucketName: !Ref bucketName
+            # Remove this section if the Lifecyle configuration is not required for this bucket
+            LifecycleConfiguration:
+                Rules:
+                -
+                  ExpirationInDays: !Ref expirationInDays
+                  Status: Enabled
+            PublicAccessBlockConfiguration:
+                BlockPublicAcls: !Ref restrictPublicAccess
+                BlockPublicPolicy: !Ref restrictPublicAccess
+                IgnorePublicAcls: !Ref restrictPublicAccess
+                RestrictPublicBuckets: !Ref restrictPublicAccess
+            # Remove this section if the Encryption for the bucket is not needed
+            BucketEncryption:
+                ServerSideEncryptionConfiguration:
+                    - ServerSideEncryptionByDefault:
+                        # Remove the kmsKeyARN parameter if the Encryption for the bucket is not needed
+                        KMSMasterKeyID: !Ref kmsKeyARN
+                        SSEAlgorithm: 'aws:kms'
+            # Remove this section if the Versioning for the bucket is not needed. It can also be disabled by setting the 'versionEnabled' flag to Suspended
+            VersioningConfiguration:
+                Status: !Ref versionEnabled
+            # Remove this section if the logging for the bucket is not needed. It can also be disabled by setting the 'loggingEnabled' flag to false
+            LoggingConfiguration:
+                DestinationBucketName: !Ref logsBucket
+                # Optional - Prefix for the log files names
+                LogFilePrefix: 'test/'
+            Tags:
+                -
+                  Key: creator
+                  Value: !Ref creator
+                -
+                  Key: project
+                  Value: !Ref projectName
